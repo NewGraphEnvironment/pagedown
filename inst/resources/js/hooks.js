@@ -609,18 +609,25 @@
         if (!table || !rendered.contains(table) || table.hasAttribute("data-split-from")) return;
         const rows = Array.from(table.querySelectorAll(":scope > tbody > tr"));
         if (rows.some(tr => overflow.comparePoint(tr, 0) < 0)) return;
+        // Step back over an element kept with it by `break-after: avoid`, and up to a parent it
+        // opens; alternating, so a section's heading moves with a subsection right below it.
         let start = table;
-        for (let i = 0, prev = start.previousElementSibling;
-             i < 3 && prev && prev.dataset.breakAfter === "avoid";
-             i++, prev = start.previousElementSibling) {
-            start = prev;
+        for (let i = 0; i < 12; i++) {
+            const prev = start.previousElementSibling;
+            if (prev && prev.dataset.breakAfter === "avoid") {
+                start = prev;
+                continue;
+            }
+            const parent = start.parentElement;
+            if (parent && parent !== rendered && rendered.contains(parent) &&
+                !parent.hasAttribute("data-split-from") && !this.hasContentBefore(parent, start)) {
+                start = parent;
+                continue;
+            }
+            break;
         }
-        for (let parent = start.parentElement;
-             parent && parent !== rendered && rendered.contains(parent) &&
-             !parent.hasAttribute("data-split-from") && !this.hasContentBefore(parent, start);
-             parent = start.parentElement) {
-            start = parent;
-        }
+        // Something must print before what moves: otherwise the next page would start where this
+        // one did, and the layout would end there, dropping everything after it.
         if (!this.hasContentBefore(rendered, start)) return;
         const range = overflow.cloneRange();
         range.setStartBefore(start);

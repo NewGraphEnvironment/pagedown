@@ -1,5 +1,6 @@
 # CHANGES IN pagedown VERSION 0.26
 
+- A table whose first row does not fit on the page below its caption and header now moves whole to the next page, caption included. Before, the caption and header were left on the page and hidden, so the caption went missing from the PDF and the next page started with a repeated header and no caption.
 
 # CHANGES IN pagedown VERSION 0.25
 

@@ -561,7 +561,6 @@
     constructor(chunker, polisher, caller) {
         super(chunker, polisher, caller);
         this.splitTablesRefs = [];
-        this.movedTablesRefs = new Set();
     }
 
     afterPageLayout(pageElement, page, breakToken, chunker) {
@@ -585,48 +584,47 @@
                     breakToken.node = this.nodeAfter(lastTheadNode, chunker.source);
                 }
 
-                if (!this.moveEmptyTable(pageElement, breakToken, node)) {
-                    this.hideEmptyTables(pageElement, node);
-                }
+                this.hideEmptyTables(pageElement, node);
             }
         }
     }
 
     // A table whose part on this page would hold no body row (only its caption and header, when
     // its first row does not fit below them) moves whole to the next page, caption included,
-    // rather than being hidden with its caption. An element kept with it by `break-after: avoid`
-    // (a heading) moves too. It is hidden as before when nothing prints before it on the page,
-    // where moving would only move it again, when it was resumed from an earlier page, or when it
-    // has already moved once.
-    moveEmptyTable(pageElement, breakToken, breakTokenNode) {
-        const tables = this.findAllAncestors(breakTokenNode, "table");
-        if (breakTokenNode.tagName === "TABLE") {
-            tables.push(breakTokenNode);
+    // rather than being hidden with its caption by hideEmptyTables(). The overflow is started
+    // before the table while the page's overflow is found, so the table is cut from the page
+    // before other handlers read it (the table of contents and running heads then name the page
+    // it prints on). An element kept with it by `break-after: avoid` (a heading) moves too, and
+    // so does a section it opens, which holds the section's id. Nothing moves when nothing
+    // prints before it on the page, or for a table resumed from an earlier page.
+    onOverflow(overflow, rendered) {
+        if (!overflow || !rendered) return;
+        const c = overflow.startContainer;
+        const at = c.nodeType === 1 ? (c.childNodes[overflow.startOffset] || c) : c;
+        const el = at.nodeType === 1 ? at : at.parentElement;
+        let table = el && el.closest("table");
+        while (table && table.parentElement && table.parentElement.closest("table")) {
+            table = table.parentElement.closest("table");
         }
-        const table = tables[0];
-        if (!table || !table.dataset.ref || this.movedTablesRefs.has(table.dataset.ref)) return false;
-        const rendered = pageElement.querySelector("[data-ref='" + table.dataset.ref + "']");
-        if (!rendered || rendered.hasAttribute("data-split-from")) return false;
-        const row = rendered.querySelector("tbody > tr");
-        if (row && !this.refEquals(row.firstElementChild, breakTokenNode)) return false;
+        if (!table || !rendered.contains(table) || table.hasAttribute("data-split-from")) return;
+        const rows = Array.from(table.querySelectorAll(":scope > tbody > tr"));
+        if (rows.some(tr => overflow.comparePoint(tr, 0) < 0)) return;
         let start = table;
         for (let i = 0, prev = start.previousElementSibling;
              i < 3 && prev && prev.dataset.breakAfter === "avoid";
              i++, prev = start.previousElementSibling) {
             start = prev;
         }
-        const first = pageElement.querySelector("[data-ref='" + start.dataset.ref + "']");
-        const area = pageElement.querySelector(".pagedjs_page_content");
-        if (!first || !area || !this.hasContentBefore(area, first)) return false;
-        for (let el = start; el; el = el.nextElementSibling) {
-            const copy = pageElement.querySelector("[data-ref='" + el.dataset.ref + "']");
-            if (copy) copy.remove();
-            if (el === table) break;
+        for (let parent = start.parentElement;
+             parent && parent !== rendered && rendered.contains(parent) &&
+             !parent.hasAttribute("data-split-from") && !this.hasContentBefore(parent, start);
+             parent = start.parentElement) {
+            start = parent;
         }
-        this.movedTablesRefs.add(table.dataset.ref);
-        breakToken.node = start;
-        breakToken.offset = 0;
-        return true;
+        if (!this.hasContentBefore(rendered, start)) return;
+        const range = overflow.cloneRange();
+        range.setStartBefore(start);
+        return range;
     }
 
     // Whether anything that prints (text, an image or the like) sits on the page before `el`.
@@ -636,8 +634,6 @@
             if (n === el || el.contains(n)) return false;
             if (!(el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_PRECEDING)) return false;
             if (n.contains(el)) continue;
-            const host = n.nodeType === Node.TEXT_NODE ? n.parentElement : n;
-            if (!host || host.closest("[style*='visibility: hidden']")) continue;
             if (n.nodeType === Node.TEXT_NODE ? n.textContent.trim().length > 0 :
                 n.matches("img, svg, canvas, video, iframe, object, embed")) return true;
         }
